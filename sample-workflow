@@ -1,0 +1,122 @@
+#---------------------------------------------------------------------
+# Infrastrucrue workflow using Circleci
+#
+# Workflow-Version    cdk-version   Jobs        Date        Info
+# 2.1                 1.115.0         2           2021        Initial Version
+#
+# Purpose:
+#   lower- to deploy the lower env
+#   upper- to deploy the upper env
+#
+# Made by Sachin Iraveni sachinmutualmmobile Copyleft (c) 2021
+#---------------------------------------------------------------------
+
+version: 2.1
+
+orbs:
+  aws-cli: circleci/aws-cli@2.0.3
+  python: circleci/python@1.4.0
+  aws-ecr: circleci/aws-ecr@7.2.0
+  aws-elastic-beanstalk: circleci/aws-elastic-beanstalk@2.0.1
+
+workflows:
+  stack:
+    jobs:
+      - lower
+      - upper:
+          requires:
+            - lower
+          filters:
+            branches:
+              only: master
+
+
+jobs:
+  lower:
+    docker:
+      - image: cimg/python:3.8.10-node
+
+    steps:
+      - checkout
+      - setup_remote_docker:
+          version: 20.10.7
+      - aws-cli/setup:
+          profile-name: POC
+      - run:
+          name: Installing the Node manager
+          command: sudo npm install -g aws-cdk@1.115.0
+      - run:
+          name: Creating a virtual environment
+          command: |
+            python3 -m venv .venv
+            source .venv/bin/activate
+      - python/install-packages:
+          pip-dependency-file: requirements.txt
+          pkg-manager: pip
+      - run:
+          name: Listing the stacks
+          command: cdk ls
+      - run:
+          name: Synthesizing into CFN templates
+          command: cdk synth
+#      - run:
+#          name: Difference between before and after synthesized CFN templates
+#          command: cdk diff --profile POC
+      - run:
+          name: Deploying the lower env
+          command: cdk deploy --all --require-approval never
+      - run:
+          name: login into ECR
+          command: aws ecr get-login-password --region us-east-1 --profile POC | docker login --username AWS --password-stdin 472132854555.dkr.ecr.us-east-1.amazonaws.com
+      - run:
+          name: build docker image
+          command: docker build -t python-flask-app .
+      - run:
+          name: tag docker image
+          command: docker tag python-flask-app:latest 472132854555.dkr.ecr.us-east-1.amazonaws.com/python-flask-app:latest
+      - run:
+          name: pushing the docker image
+          command: docker push 472132854555.dkr.ecr.us-east-1.amazonaws.com/python-flask-app:latest
+      - run:
+          name: install eb cli
+          command: pip install awsebcli
+      - run:
+          name: EB init
+          command: cd .deploy && eb init -r us-east-1 Python-Flask-Application
+      - run:
+          name: EB Deploy
+          command: cd .deploy && eb deploy LowerEnvironment
+
+  upper:
+    docker:
+      - image: cimg/python:3.8.10-node
+
+    steps:
+      - checkout
+      - setup_remote_docker:
+          version: 19.03.13
+      - aws-cli/setup:
+          profile-name: POC
+      - run:
+          name: Installing the Node manager
+          command: sudo npm install -g aws-cdk@1.115.0
+      - run:
+          name: Creating a virtual environment
+          command: |
+            python3 -m venv .venv
+            source .venv/bin/activate
+      - python/install-packages:
+          pip-dependency-file: requirements.txt
+          pkg-manager: pip
+#      - run:
+#          name: Listing the stacks
+#          command: cdk ls Up* --profile POC
+#      - run:
+#          name: Synthesizing into CFN templates
+#          command: cdk synth --profile POC
+  #      - run:
+  #          name: Difference between before and after synthesized CFN templates
+  #          command: cdk diff --profile POC
+  #      - run:
+  #          name: Deploying the lower env
+  #          command: cdk deploy --all --require-approval never --profile POC
